@@ -10,6 +10,8 @@ import SocketServer
 import struct
 import os
 from types import StringType
+import pymongo
+import re
 
 
 
@@ -284,7 +286,8 @@ class FieldPacket(MySQLPacket):
         for name in string_fields:
             s = getattr(self, name)
             self.data += struct.pack("B", len(s))
-            self.data += s
+            # Make sure there's no unicode
+            self.data += str(s)
         # Then do the numeric packet fields
         self.data += struct.pack(
             "< B H I B H B H B B",
@@ -406,6 +409,98 @@ class ResultSet(object):
 
 
 
+class Query(object):
+    pass
+
+
+SQL_IDENTIFIER_REGEX = "(?:`[^`]+`|[$\w]+)"
+# TODO: Add support for quote escapes
+SQL_VALUE_REGEX = "(?:[0-9]+|'[^']+'|\"[^\"]+\")"
+SQL_CONDITION_REGEX = ""
+SQL_KEYWORDS = ("SELECT", "FROM", "WHERE")
+SQL_REGEX_DICT = {
+    "ident": SQL_IDENTIFIER_REGEX,
+    "value": SQL_VALUE_REGEX
+}
+
+class SelectQuery(Query):
+    """ Respresents an SQL SELECT query. """
+
+    statement_regex = re.compile((
+        "^\s*SELECT\s+" +
+            "\*\s+" +
+        "(FROM)\s+" +
+            "(?P<table>{ident})" +
+        "(?:\s+(WHERE)" +
+            "\s+({ident})\s*(=)\s*({value})" +
+        ")?\s*;?\s*"
+    ).format(**SQL_REGEX_DICT), re.I | re.S | re.M)
+    
+    def __init__ (self, statement):
+        # Make sure we have a SELECT query
+        if not statement.lower().startswith("select"):
+            raise ValueError("The given statement a SELECT query.")
+        self.statement = statement
+
+    def execute (self):
+        try:
+            m = self.statement_regex.match(self.statement)
+        except Exception, e:
+            print e
+        if not m:
+            print "Could not parse this query :("
+            return
+        
+        # Figure out what the query actually means
+        parts = m.groups()
+        print "Parts: %s" % (parts,)
+        conditions = []
+        current_keyword = ""
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            if not part:
+                i += 1
+                continue
+            if part.upper() in SQL_KEYWORDS:
+                current_keyword = part.upper()
+                # Get the table expression
+                if current_keyword == "FROM":
+                    # TODO: Support more than straight table names
+                    i += 1
+                    table = parts[i]
+                # Get the WHERE/conditional expression
+                elif current_keyword == "WHERE":
+                    # TODO: Lots of other cases to deal with here
+                    # For now, we'll just handle a single condition
+                    i += 1
+                    identifier = parts[i]
+                    i += 1
+                    operator = parts[i]
+                    i += 1
+                    value = parts[i]
+
+                    # Parse out the value if it is a string
+                    if value[0] in ("'", '"'):
+                        value = value[1:-1]
+                    # Make it a number if it isn't
+                    # TODO: Could be a float...
+                    else:
+                        value = int(value)
+
+                    # A quick proof of concept
+                    # TODO: Make a real condition mapping system
+                    if operator == "=":
+                        conditions += [{identifier: value}]
+            else:
+                break
+            i += 1
+        
+        return table, conditions
+
+
+
+
 
 class MySQLServerSession(object):
     def __init__ (self, sock, client):
@@ -419,17 +514,60 @@ class MySQLServerSession(object):
         
         print "Connected to %s" % (client[0])
 
+        mongo = pymongo.Connection()
+        mongo_coll = mongo["pysql_test"]
+        print "Brought up MongoDB Connection"
+
         # Now just sit here relieving commands all day
         while True:
             command = CommandPacket.fromSocket(self.socket)
+            print "%s: %s" % (command.description, command.statement)
             if command.statement.lower().find("select") != -1:
-                cols = ["Name", "City"]
+                """cols = ["Name", "City"]
                 rows = [["Jon", "NYC"], ["GMP", "Worc"]]
                 rs = ResultSet(cols, rows, "test_table", "test")
-                self.socket.send(str(rs))
+                self.socket.send(str(rs))"""
+                query_info = SelectQuery(command.statement).execute()
+                if not query_info:
+                    print "Unsupported SELECT query."
+                    self.socket.send(str(OKPacket()))
+                    return
+                table, cond = query_info
+                if len(cond):
+                    cond = cond[0]
+                    print "Running db.%s.find(%s)" % (table, cond)
+                    results = mongo_coll[table].find(cond)
+                else:
+                    print "Running db.%s.find()" % table
+                    results = mongo_coll[table].find()
+
+                # If we got any results, send them back
+                if results.count():
+                    # Convert everything to MySQL format
+                    # Start by getting a list of all the columns
+                    cols = results[0].keys()
+                    # Delete the _id key to avoid issues for now
+                    cols = [x for x in cols if x != "_id"]
+                    # Put togeher all the dictionaries into flat rows
+                    rows = []
+                    for res in results:
+                        data = []
+                        for c in cols:
+                            data.append(res[c])
+                        rows.append(data)
+                    print "Rows: %s" % rows
+                    print "Cols: %s" % cols
+                    # Turn it into actual packets and sent it out
+                    rs = ResultSet(cols, rows, table, "pysql_test")
+                    self.socket.send(str(rs))
+                else:
+                    self.socket.send(str(OKPacket()))
+
+
+                        
+
             else:
                 self.socket.send(str(OKPacket()))
-            print "%s: %s" % (command.description, command.statement)
             
 
     
