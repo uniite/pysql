@@ -412,16 +412,51 @@ class ResultSet(object):
 class Query(object):
     pass
 
+        
+
+
+
+
 
 SQL_IDENTIFIER_REGEX = "(?:`[^`]+`|[$\w]+)"
 # TODO: Add support for quote escapes
+# TODO: Add support for floats and hex numbers
 SQL_VALUE_REGEX = "(?:[0-9]+|'[^']+'|\"[^\"]+\")"
 SQL_CONDITION_REGEX = ""
-SQL_KEYWORDS = ("SELECT", "FROM", "WHERE")
 SQL_REGEX_DICT = {
     "ident": SQL_IDENTIFIER_REGEX,
     "value": SQL_VALUE_REGEX
 }
+
+
+from sql_constants import *
+SQL_OPERATORS_REGEX = "|".join(SQL_ESCAPED_OPERATORS)
+
+class SQLStatement(object):
+    def __init__ (self, statement):
+        self.statement = statement
+
+    def scan (self):
+        """
+        Scans through the SQL statement, and splits it up
+        into tokens like "FROM", "=", "(", etc.
+        """
+
+        def parse_op (scanner, token): return "operator", token
+        def parse_ident (scanner, token): return "identifier", token
+        def parse_value (scanner, token): return "value", token
+        def parse_kw (scanner, token): return "keyword", token
+
+        scanner = re.Scanner([
+            (SQL_OPERATORS_REGEX, parse_op),
+            (SQL_KEYWORDS_REGEX, parse_kw),
+            (SQL_IDENTIFIER_REGEX, parse_ident),
+            (SQL_VALUE_REGEX, parse_value),
+            ("\s*", None)
+        ])
+
+        return scanner.scan(self.statement)
+
 
 class SelectQuery(Query):
     """ Respresents an SQL SELECT query. """
@@ -443,42 +478,45 @@ class SelectQuery(Query):
         self.statement = statement
 
     def execute (self):
-        try:
-            m = self.statement_regex.match(self.statement)
-        except Exception, e:
-            print e
-        if not m:
-            print "Could not parse this query :("
-            return
-        
         # Figure out what the query actually means
-        parts = m.groups()
-        print "Parts: %s" % (parts,)
+        tokens = SQLStatement(self.statement).scan()
+        if tokens[1]:
+            print "Could not parse statement. Error around: %s" % tokens[1]
+            return
+        tokens = tokens[0]
+        print "Tokens: %s" % (tokens,)
         conditions = []
         current_keyword = ""
         i = 0
-        while i < len(parts):
-            part = parts[i]
-            if not part:
+        while i < len(tokens):
+            token = tokens[i]
+            print token
+            if not token:
                 i += 1
                 continue
-            if part.upper() in SQL_KEYWORDS:
-                current_keyword = part.upper()
+            # TODO: Rework this to loop through without the i += 1 nonsense
+            # Should scan through, keep adding on to keyword args array
+            # until another keyword is encountered. Then, parse the args.
+            if token[1].upper() in SQL_KEYWORDS:
+                current_keyword = token[1].upper()
                 # Get the table expression
-                if current_keyword == "FROM":
+                if current_keyword == "SELECT":
+                    i += 1
+                    target_cols = tokens[i][1]
+                elif current_keyword == "FROM":
                     # TODO: Support more than straight table names
                     i += 1
-                    table = parts[i]
+                    table = tokens[i][1]
                 # Get the WHERE/conditional expression
                 elif current_keyword == "WHERE":
                     # TODO: Lots of other cases to deal with here
                     # For now, we'll just handle a single condition
                     i += 1
-                    identifier = parts[i]
+                    identifier = tokens[i][1]
                     i += 1
-                    operator = parts[i]
+                    operator = tokens[i][1]
                     i += 1
-                    value = parts[i]
+                    value = tokens[i][1]
 
                     # Parse out the value if it is a string
                     if value[0] in ("'", '"'):
@@ -588,7 +626,7 @@ class MyTCPHandler(SocketServer.BaseRequestHandler):
 
 
 if __name__ == "__main__":
-    HOST, PORT = "192.168.7.100", 3306
+    HOST, PORT = "0.0.0.0", 3306
 
     # Create the server, binding to localhost on port 9999
     server = SocketServer.TCPServer((HOST, PORT), MyTCPHandler)
