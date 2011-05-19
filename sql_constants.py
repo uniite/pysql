@@ -26,11 +26,30 @@ SQL_OPERATORS = set([
     ",", ";"
 ])
 
+
+# SQL Operators grouped by meaning
+# TODO: Add more
+SQL_OPERATOR_TYPES = {
+    "AND": "logical_and",
+    "&&": "logical_and",
+    "OR": "logical_or",
+    "||": "logical_or",
+    "=": "equality",
+    "NOT": "logical_not",
+    "!": "logical_not",
+    ">=": "greater_than_or_equal",
+    ">": "greater_than",
+    "<=": "less_than_or_equal",
+    "<": "less_than",
+    "!=": "not_equal",
+}
+
 # All the operators which are symbols rather than words
 # (used for regex/scanning)
 SQL_ESCAPED_OPERATORS = set([
     "INTERVAL",
     "BINARY", "COLLATE",
+    "!=",  # Needs to be up here, or the scanner will match != as !, =
     "\\!",
     "\\-", "~",
     "\\^",
@@ -39,7 +58,7 @@ SQL_ESCAPED_OPERATORS = set([
     "<<", ">>",
     "&",
     "\\|",
-    "=", "<=>", ">=", ">", "<=", "<", "<>", "!=", "IS", "LIKE", "REGEXP", "IN",
+    "=", "<=>", ">=", ">", "<=", "<", "<>", "IS", "LIKE", "REGEXP", "IN",
     "BETWEEN", "CASE", "WHEN", "THEN", "ELSE",
     "NOT",
     "&&", "AND",
@@ -52,7 +71,7 @@ SQL_ESCAPED_OPERATORS = set([
 
 # All the MySQL operators by name,
 # and their query/code equivalents, by language.
-SQL_OPERATOR_TOKENS = {
+SQL_OPERATOR_TRANSLATION = {
     "interval": {
         "sql": "INTERVAL {0} {1}",
         "js": None,
@@ -60,7 +79,7 @@ SQL_OPERATOR_TOKENS = {
     },
     "binary": None,
     "collate": None,
-    "logical_negation": {
+    "logical_not": {
         "sql": "NOT {0}",
         "js": "!{0}",
         "python": "not {0}"
@@ -87,6 +106,7 @@ SQL_OPERATOR_TOKENS = {
     "bitwise_or": "{0} | {1}",
     "equality": {
         "sql": "{0} = {1}",
+        "mongodb": "{0}: {1}",
         "js": "{0} == {1}",
         "python": "{0} == {1}"
     },
@@ -132,6 +152,7 @@ SQL_OPERATOR_TOKENS = {
     "else": None,
     "logical_and": {
         "sql": "{0} AND {1}",
+        "mongodb": "{0}, {1}",
         "js": "{0} && {1}",
         "python": "{0} and {1}"
     },
@@ -140,8 +161,11 @@ SQL_OPERATOR_TOKENS = {
         "js": "{0} ? !{1} : {1}",
         "python": "bool({1}) ^ bool({1})"
     },
+    # TODO: Figure out how to make the translation optimized
+    # eg. {$or: {[a, b, c]}} rather than {$or: [{$or: {[a, b]}}, c]}
     "logical_or": {
         "sql": "{0} OR {1}",
+        "mongodb": "$or: [{0}, {1}]",
         "js": "{0} || {1}",
         "python": "{0} or {1}"
     },
@@ -170,6 +194,7 @@ SQL_OPERATOR_TOKENS = {
 
 # MySQL keywords form:
 # http://dev.mysql.com/doc/mysqld-version-reference/en/mysqld-version-reference-reservedwords-5-5.html
+# TODO: Add time units, or build them into the INTERVAL sub-parser
 keywords = """
 ACCESSIBLE
 ADD

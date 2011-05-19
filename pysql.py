@@ -450,8 +450,8 @@ class SQLStatement(object):
         scanner = re.Scanner([
             (SQL_OPERATORS_REGEX, parse_op),
             (SQL_KEYWORDS_REGEX, parse_kw),
-            (SQL_IDENTIFIER_REGEX, parse_ident),
             (SQL_VALUE_REGEX, parse_value),
+            (SQL_IDENTIFIER_REGEX, parse_ident),
             ("\s*", None)
         ])
 
@@ -485,55 +485,30 @@ class SelectQuery(Query):
             return
         tokens = tokens[0]
         print "Tokens: %s" % (tokens,)
-        conditions = []
-        current_keyword = ""
+        keyword = ""
+        arguments = []
+        parsed = []
         i = 0
-        while i < len(tokens):
-            token = tokens[i]
-            print token
-            if not token:
-                i += 1
-                continue
+        for token_type, token_value in tokens:
             # TODO: Rework this to loop through without the i += 1 nonsense
             # Should scan through, keep adding on to keyword args array
             # until another keyword is encountered. Then, parse the args.
-            if token[1].upper() in SQL_KEYWORDS:
-                current_keyword = token[1].upper()
-                # Get the table expression
-                if current_keyword == "SELECT":
-                    i += 1
-                    target_cols = tokens[i][1]
-                elif current_keyword == "FROM":
-                    # TODO: Support more than straight table names
-                    i += 1
-                    table = tokens[i][1]
-                # Get the WHERE/conditional expression
-                elif current_keyword == "WHERE":
-                    # TODO: Lots of other cases to deal with here
-                    # For now, we'll just handle a single condition
-                    i += 1
-                    identifier = tokens[i][1]
-                    i += 1
-                    operator = tokens[i][1]
-                    i += 1
-                    value = tokens[i][1]
-
-                    # Parse out the value if it is a string
-                    if value[0] in ("'", '"'):
-                        value = value[1:-1]
-                    # Make it a number if it isn't
-                    # TODO: Could be a float...
+            # Check if we have a keyword
+            if token_value.upper() in SQL_KEYWORDS or token_value == ";":
+                # The there was a previous keyword,
+                # We need to parse its arguments now before moving on.
+                if keyword:
+                    if hasattr(sql_parsers, keyword):
+                        result = getattr(sql_parsers, keyword)(arguments)
+                        parsed.append((keyword, result))
                     else:
-                        value = int(value)
-
-                    # A quick proof of concept
-                    # TODO: Make a real condition mapping system
-                    if operator == "=":
-                        conditions += [{identifier: value}]
+                        raise Exception("No parser found for %s" % keyword)
             else:
-                break
-            i += 1
-        
+                arguments += (token_type, token_value)
+                keyword = token_value.upper()
+
+        # TODO: Get a table back out here
+        # TODO: Get the conditions
         return table, conditions
 
 
